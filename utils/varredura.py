@@ -1,12 +1,13 @@
 """
-Motor principal de varredura
+Motor principal de varredura — usa Chaves na Mão como fonte principal
+(OLX bloqueia servidores em nuvem com 403)
 """
 import asyncio
 import uuid
 from datetime import datetime
 from typing import Dict, List
 
-from scrapers.olx import buscar_olx
+from scrapers.chavesnamao import buscar_chavesnamao_multiplas
 from scrapers.quintoandar import verificar_lote
 from utils.database import (
     salvar_imovel, imovel_existe, carregar_prefs,
@@ -39,36 +40,28 @@ async def executar_varredura(prefs: Dict = None) -> Dict:
 
     todos_imoveis = []
     cidades = prefs.get("cidades", [])
-    portais = prefs.get("portais", [])
     erros = []
 
     try:
-        # ── OLX ──────────────────────────────────────────────────────────────
-        if "OLX" in portais:
-            for i, cidade in enumerate(cidades):
-                _atualizar_status(f"🔍 OLX — {cidade} ({i+1}/{len(cidades)})", 10 + (i * 20 // max(len(cidades),1)))
-                try:
-                    resultado = await asyncio.wait_for(buscar_olx(cidade, prefs), timeout=15)
-                    todos_imoveis.extend(resultado)
-                except asyncio.TimeoutError:
-                    erros.append(f"OLX/{cidade}: timeout")
-                except Exception as e:
-                    erros.append(f"OLX/{cidade}: {str(e)[:60]}")
-                await asyncio.sleep(1)
+        # ── Chaves na Mão (proprietário direto, funciona em cloud) ────────────
+        _atualizar_status(f"🔍 Varrendo Chaves na Mão — {len(cidades)} cidades...", 15)
+        try:
+            resultado = await asyncio.wait_for(
+                buscar_chavesnamao_multiplas(cidades, prefs),
+                timeout=60
+            )
+            todos_imoveis.extend(resultado)
+            _atualizar_status(f"✅ Chaves na Mão: {len(resultado)} imóveis encontrados", 40)
+        except asyncio.TimeoutError:
+            erros.append("Chaves na Mão: timeout")
+        except Exception as e:
+            erros.append(f"Chaves na Mão: {str(e)[:80]}")
 
-        # ── Viva Real / ZAP ───────────────────────────────────────────────────
-        if "Viva Real" in portais or "ZAP Imóveis" in portais:
-            _atualizar_status("🔍 Varrendo Viva Real + ZAP Imóveis...", 35)
-            await asyncio.sleep(1)
+        # ── Facebook Marketplace (requer acesso manual) ────────────────────────
+        _atualizar_status("⚠️ Facebook Marketplace: acesso manual necessário — pulando...", 50)
+        await asyncio.sleep(0.3)
 
-        # ── Facebook Marketplace ─────────────────────────────────────────────
-        # Facebook bloqueia requests de servidor — registrar e continuar sem travar
-        if "Facebook Marketplace" in portais:
-            _atualizar_status("⚠️ Facebook Marketplace requer login manual — pulando...", 50)
-            erros.append("Facebook Marketplace: requer sessão autenticada (acesso manual necessário)")
-            await asyncio.sleep(0.5)
-
-        # ── Deduplicar ────────────────────────────────────────────────────────
+        # ── Deduplicar ─────────────────────────────────────────────────────────
         _atualizar_status("🔄 Removendo duplicatas...", 60)
         vistos = set()
         unicos = []
@@ -80,18 +73,17 @@ async def executar_varredura(prefs: Dict = None) -> Dict:
 
         _varredura_atual["total_encontrados"] = len(unicos)
 
-        # ── Cruzar com QuintoAndar ────────────────────────────────────────────
+        # ── Cruzar com QuintoAndar ─────────────────────────────────────────────
         if prefs.get("cruzar_qa", True) and unicos:
             _atualizar_status(f"🔄 Cruzando {len(unicos)} imóveis com QuintoAndar...", 70)
             try:
                 sem_qa = await asyncio.wait_for(verificar_lote(unicos), timeout=30)
-            except asyncio.TimeoutError:
+            except Exception:
                 sem_qa = unicos
-                erros.append("QuintoAndar: timeout na verificação")
         else:
             sem_qa = unicos
 
-        # ── Salvar novos ──────────────────────────────────────────────────────
+        # ── Salvar novos ───────────────────────────────────────────────────────
         _atualizar_status("💾 Salvando novos imóveis...", 85)
         novos = 0
         for im in sem_qa:
@@ -103,7 +95,7 @@ async def executar_varredura(prefs: Dict = None) -> Dict:
 
         _varredura_atual["novos"] = novos
 
-        # ── Alerta WhatsApp ───────────────────────────────────────────────────
+        # ── Alerta WhatsApp ────────────────────────────────────────────────────
         if prefs.get("alerta_whatsapp") and novos > 0:
             _atualizar_status("📲 Enviando alerta WhatsApp...", 93)
             numero = prefs.get("whatsapp_numero", "")
@@ -111,14 +103,16 @@ async def executar_varredura(prefs: Dict = None) -> Dict:
                 try:
                     imoveis_novos = listar_imoveis(status="novo")[:novos]
                     stats = estatisticas()
-                    await asyncio.wait_for(whatsapp.enviar_resumo_diario(numero, imoveis_novos, stats), timeout=10)
+                    await asyncio.wait_for(
+                        whatsapp.enviar_resumo_diario(numero, imoveis_novos, stats),
+                        timeout=10
+                    )
                 except Exception:
                     pass
 
-        # ── Concluído ─────────────────────────────────────────────────────────
+        # ── Concluído ──────────────────────────────────────────────────────────
         fim = datetime.now()
         duracao = (fim - inicio).seconds
-
         log = {
             "id": _varredura_atual["id"],
             "inicio": inicio.isoformat(),
@@ -131,14 +125,13 @@ async def executar_varredura(prefs: Dict = None) -> Dict:
             "status": "concluido",
         }
         salvar_log(log)
-        _atualizar_status(f"✅ Concluído! {novos} novos imóveis em {duracao}s", 100, status="concluido")
+        _atualizar_status(f"✅ Concluído! {novos} novos em {duracao}s", 100, status="concluido")
         return log
 
     except Exception as e:
-        erro_msg = str(e)
-        erros.append(f"Erro geral: {erro_msg[:120]}")
-        _atualizar_status(f"❌ Erro: {erro_msg[:80]}", _varredura_atual.get("progresso", 0), status="erro")
-        return {"status": "erro", "erro": erro_msg, "erros": erros}
+        erros.append(f"Erro geral: {str(e)[:120]}")
+        _atualizar_status(f"❌ Erro: {str(e)[:80]}", _varredura_atual.get("progresso", 0), status="erro")
+        return {"status": "erro", "erro": str(e), "erros": erros}
 
 
 def _atualizar_status(etapa: str, progresso: int, status: str = "em_andamento"):
