@@ -67,14 +67,11 @@ class Preferencias(BaseModel):
     alerta_whatsapp: bool = True
     whatsapp_numero: Optional[str] = None
     whatsapp_token: Optional[str] = None
+    termos_busca: List[str] = []
     modelo_mensagem: str = (
-        "Olá, {anunciante}! 👋\n\n"
-        "Vi seu anúncio do imóvel em *{bairro}, {cidade}* e fiquei muito interessado.\n\n"
-        "Sou corretor parceiro do QuintoAndar e acredito que seu imóvel tem um ótimo perfil "
-        "para ser anunciado na plataforma — o que pode acelerar muito a locação, com mais "
-        "segurança e sem burocracia para você.\n\n"
-        "Posso te explicar melhor como funciona? Não há nenhum custo para o proprietário. 🏠✨\n\n"
-        "Aguardo seu retorno!"
+        "Olá, {anunciante}! 👋\n\nVi seu anúncio do imóvel em *{bairro}, {cidade}* e fiquei muito interessado.\n\n"
+        "Sou corretor parceiro do QuintoAndar e acredito que seu imóvel tem ótimo perfil para a plataforma.\n\n"
+        "Posso explicar melhor? Não há custo para o proprietário. 🏠✨\n\nAguardo seu retorno!"
     )
 
 
